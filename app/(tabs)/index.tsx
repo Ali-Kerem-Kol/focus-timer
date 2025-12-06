@@ -1,9 +1,12 @@
 import React, { useState, useRef } from 'react';
 import { View, Text, TextInput, TouchableOpacity, StyleSheet } from 'react-native';
+import RNPickerSelect from 'react-native-picker-select';
 
 export default function FocusTimerScreen() {
   const [minutesInput, setMinutesInput] = useState('');
   const [secondsInput, setSecondsInput] = useState('');
+  const [category, setCategory] = useState<string | null>(null);
+
   const [timeLeft, setTimeLeft] = useState(0);
   const intervalRef = useRef<NodeJS.Timeout | null>(null);
   const [isRunning, setIsRunning] = useState(false);
@@ -54,6 +57,22 @@ export default function FocusTimerScreen() {
     <View style={styles.container}>
       <Text style={styles.title}>Odaklanma Zamanlayıcı</Text>
 
+      {/* --- Kategori Seçimi --- */}
+      <View style={styles.dropdownContainer}>
+        <Text style={styles.label}>Kategori Seç:</Text>
+        <RNPickerSelect
+          onValueChange={(value) => setCategory(value)}
+          placeholder={{ label: "Kategori seçiniz...", value: null }}
+          items={[
+            { label: "Ders Çalışma", value: "ders" },
+            { label: "Kodlama", value: "kodlama" },
+            { label: "Proje", value: "proje" },
+            { label: "Kitap Okuma", value: "kitap" },
+          ]}
+          style={pickerSelectStyles}
+        />
+      </View>
+
       {/* Süre giriş alanları */}
       <View style={styles.row}>
         <TextInput
@@ -93,6 +112,23 @@ export default function FocusTimerScreen() {
   );
 }
 
+const pickerSelectStyles = {
+  inputAndroid: {
+    color: 'white',
+    backgroundColor: '#1b2033',
+    padding: 12,
+    borderRadius: 8,
+    marginTop: 5,
+  },
+  inputIOS: {
+    color: 'white',
+    backgroundColor: '#1b2033',
+    padding: 12,
+    borderRadius: 8,
+    marginTop: 5,
+  },
+};
+
 const styles = StyleSheet.create({
   container: {
     flex: 1,
@@ -105,6 +141,14 @@ const styles = StyleSheet.create({
     fontSize: 22,
     color: 'white',
     marginBottom: 20,
+  },
+  dropdownContainer: {
+    width: '80%',
+    marginBottom: 20,
+  },
+  label: {
+    color: 'white',
+    marginBottom: 5,
   },
   row: {
     flexDirection: 'row',
