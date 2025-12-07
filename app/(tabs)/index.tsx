@@ -18,6 +18,11 @@ export default function FocusTimerScreen() {
   };
 
   const startTimer = () => {
+    if (!category) {
+      alert("Lütfen kategori seçiniz.");
+      return;
+    }
+
     const minutes = parseInt(minutesInput) || 0;
     const seconds = parseInt(secondsInput) || 0;
     const total = minutes * 60 + seconds;
@@ -70,6 +75,7 @@ export default function FocusTimerScreen() {
             { label: "Kitap Okuma", value: "kitap" },
           ]}
           style={pickerSelectStyles}
+          disabled={isRunning}
         />
       </View>
 
@@ -81,6 +87,7 @@ export default function FocusTimerScreen() {
           placeholder="Dakika"
           value={minutesInput}
           onChangeText={setMinutesInput}
+          editable={!isRunning} // Timer çalışırken değiştirilemez
         />
         <TextInput
           style={styles.input}
@@ -88,6 +95,7 @@ export default function FocusTimerScreen() {
           placeholder="Saniye"
           value={secondsInput}
           onChangeText={setSecondsInput}
+          editable={!isRunning}
         />
       </View>
 
