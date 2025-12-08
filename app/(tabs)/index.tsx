@@ -1,5 +1,5 @@
-import React, { useState, useRef } from 'react';
-import { View, Text, TextInput, TouchableOpacity, StyleSheet } from 'react-native';
+import React, { useState, useRef, useEffect } from 'react';
+import { View, Text, TextInput, TouchableOpacity, StyleSheet, AppState } from 'react-native';
 import RNPickerSelect from 'react-native-picker-select';
 
 export default function FocusTimerScreen() {
@@ -10,6 +10,27 @@ export default function FocusTimerScreen() {
   const [timeLeft, setTimeLeft] = useState(0);
   const intervalRef = useRef<NodeJS.Timeout | null>(null);
   const [isRunning, setIsRunning] = useState(false);
+
+  const [distractionCount, setDistractionCount] = useState(0);
+
+  // --------------------
+  //   APPSTATE LISTENER
+  // --------------------
+  useEffect(() => {
+    const subscription = AppState.addEventListener("change", (nextState) => {
+      if (nextState !== "active") {
+        if (isRunning) {
+          stopTimer(); // timer durdurulur
+          setDistractionCount(prev => prev + 1);
+          alert("Dikkat dağıldı! Uygulamadan çıktığınız için sayaç durduduruldu.");
+        }
+      }
+    });
+
+    return () => {
+      subscription.remove();
+    };
+  }, [isRunning]);
 
   const formatTime = (totalSeconds: number) => {
     const m = Math.floor(totalSeconds / 60);
@@ -56,13 +77,13 @@ export default function FocusTimerScreen() {
   const resetTimer = () => {
     stopTimer();
     setTimeLeft(0);
+    setDistractionCount(0);
   };
 
   return (
     <View style={styles.container}>
       <Text style={styles.title}>Odaklanma Zamanlayıcı</Text>
 
-      {/* --- Kategori Seçimi --- */}
       <View style={styles.dropdownContainer}>
         <Text style={styles.label}>Kategori Seç:</Text>
         <RNPickerSelect
@@ -79,7 +100,6 @@ export default function FocusTimerScreen() {
         />
       </View>
 
-      {/* Süre giriş alanları */}
       <View style={styles.row}>
         <TextInput
           style={styles.input}
@@ -87,7 +107,7 @@ export default function FocusTimerScreen() {
           placeholder="Dakika"
           value={minutesInput}
           onChangeText={setMinutesInput}
-          editable={!isRunning} // Timer çalışırken değiştirilemez
+          editable={!isRunning}
         />
         <TextInput
           style={styles.input}
@@ -99,10 +119,12 @@ export default function FocusTimerScreen() {
         />
       </View>
 
-      {/* Geri sayım */}
       <Text style={styles.timer}>{formatTime(timeLeft)}</Text>
 
-      {/* Butonlar */}
+      <Text style={styles.distraction}>
+        Dikkat Dağınıklığı: {distractionCount}
+      </Text>
+
       <View style={styles.row}>
         <TouchableOpacity style={[styles.button, styles.start]} onPress={startTimer} disabled={isRunning}>
           <Text style={styles.buttonText}>Başlat</Text>
@@ -175,6 +197,11 @@ const styles = StyleSheet.create({
     fontSize: 50,
     color: 'white',
     marginVertical: 20,
+  },
+  distraction: {
+    color: 'white',
+    marginBottom: 10,
+    fontSize: 16,
   },
   button: {
     paddingVertical: 10,
