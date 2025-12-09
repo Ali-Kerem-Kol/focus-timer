@@ -2,6 +2,13 @@ import React, { useState, useRef, useEffect } from 'react';
 import { View, Text, TextInput, TouchableOpacity, StyleSheet, AppState } from 'react-native';
 import RNPickerSelect from 'react-native-picker-select';
 
+type LastSession = {
+  category: string;
+  duration: number; // total seconds
+  distractions: number;
+  finishedAt: string;
+};
+
 export default function FocusTimerScreen() {
   const [minutesInput, setMinutesInput] = useState('');
   const [secondsInput, setSecondsInput] = useState('');
@@ -13,23 +20,24 @@ export default function FocusTimerScreen() {
 
   const [distractionCount, setDistractionCount] = useState(0);
 
+  // Yeni eklenen state (Commit 9)
+  const [lastSession, setLastSession] = useState<LastSession | null>(null);
+
   // --------------------
-  //   APPSTATE LISTENER
+  //     APPSTATE
   // --------------------
   useEffect(() => {
     const subscription = AppState.addEventListener("change", (nextState) => {
       if (nextState !== "active") {
         if (isRunning) {
-          stopTimer(); // timer durdurulur
+          stopTimer();
           setDistractionCount(prev => prev + 1);
-          alert("Dikkat dağıldı! Uygulamadan çıktığınız için sayaç durduduruldu.");
+          alert("Dikkat dağıldı! Sayaç durduruldu.");
         }
       }
     });
 
-    return () => {
-      subscription.remove();
-    };
+    return () => subscription.remove();
   }, [isRunning]);
 
   const formatTime = (totalSeconds: number) => {
@@ -55,12 +63,22 @@ export default function FocusTimerScreen() {
 
     setTimeLeft(total);
     setIsRunning(true);
+    setLastSession(null); // önceki özet gizlensin
 
     intervalRef.current = setInterval(() => {
       setTimeLeft(prev => {
         if (prev <= 1) {
           clearInterval(intervalRef.current!);
           setIsRunning(false);
+
+          // ------ SEANS ÖZETİNİ OLUŞTUR ------
+          setLastSession({
+            category: category!,
+            duration: total,
+            distractions: distractionCount,
+            finishedAt: new Date().toISOString(),
+          });
+
           alert("Süre bitti!");
           return 0;
         }
@@ -78,12 +96,14 @@ export default function FocusTimerScreen() {
     stopTimer();
     setTimeLeft(0);
     setDistractionCount(0);
+    setLastSession(null);
   };
 
   return (
     <View style={styles.container}>
       <Text style={styles.title}>Odaklanma Zamanlayıcı</Text>
 
+      {/* --- Kategori Seçimi --- */}
       <View style={styles.dropdownContainer}>
         <Text style={styles.label}>Kategori Seç:</Text>
         <RNPickerSelect
@@ -100,6 +120,7 @@ export default function FocusTimerScreen() {
         />
       </View>
 
+      {/* Süre giriş alanları */}
       <View style={styles.row}>
         <TextInput
           style={styles.input}
@@ -119,12 +140,14 @@ export default function FocusTimerScreen() {
         />
       </View>
 
+      {/* Geri sayım */}
       <Text style={styles.timer}>{formatTime(timeLeft)}</Text>
 
       <Text style={styles.distraction}>
         Dikkat Dağınıklığı: {distractionCount}
       </Text>
 
+      {/* Butonlar */}
       <View style={styles.row}>
         <TouchableOpacity style={[styles.button, styles.start]} onPress={startTimer} disabled={isRunning}>
           <Text style={styles.buttonText}>Başlat</Text>
@@ -138,6 +161,22 @@ export default function FocusTimerScreen() {
           <Text style={styles.buttonText}>Sıfırla</Text>
         </TouchableOpacity>
       </View>
+
+      {/* ------------------- */}
+      {/*   SEANS ÖZETİ UI    */}
+      {/* ------------------- */}
+      {lastSession && (
+        <View style={styles.summaryBox}>
+          <Text style={styles.summaryTitle}>Son Seans Özeti</Text>
+
+          <Text style={styles.summaryText}>Kategori: {lastSession.category}</Text>
+          <Text style={styles.summaryText}>Süre: {Math.floor(lastSession.duration / 60)} dk</Text>
+          <Text style={styles.summaryText}>Dikkat Dağınıklığı: {lastSession.distractions}</Text>
+          <Text style={styles.summaryText}>
+            Bitiş Saati: {new Date(lastSession.finishedAt).toLocaleString()}
+          </Text>
+        </View>
+      )}
     </View>
   );
 }
@@ -220,5 +259,22 @@ const styles = StyleSheet.create({
   buttonText: {
     color: 'white',
     fontWeight: 'bold',
+  },
+
+  summaryBox: {
+    marginTop: 25,
+    backgroundColor: '#1b2033',
+    padding: 15,
+    borderRadius: 10,
+    width: '90%',
+  },
+  summaryTitle: {
+    color: 'white',
+    fontSize: 18,
+    marginBottom: 10,
+  },
+  summaryText: {
+    color: 'white',
+    fontSize: 15,
   },
 });
