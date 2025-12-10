@@ -1,13 +1,19 @@
 import React, { useState, useRef, useEffect } from 'react';
 import { View, Text, TextInput, TouchableOpacity, StyleSheet, AppState } from 'react-native';
 import RNPickerSelect from 'react-native-picker-select';
+import AsyncStorage from '@react-native-async-storage/async-storage';
 
-type LastSession = {
+type FocusSession = {
+  id: string;
   category: string;
-  duration: number; // total seconds
+  duration: number;
   distractions: number;
   finishedAt: string;
 };
+
+type LastSession = FocusSession;
+
+const STORAGE_KEY = "FOCUS_SESSIONS";
 
 export default function FocusTimerScreen() {
   const [minutesInput, setMinutesInput] = useState('');
@@ -20,12 +26,12 @@ export default function FocusTimerScreen() {
 
   const [distractionCount, setDistractionCount] = useState(0);
 
-  // Yeni eklenen state (Commit 9)
+  // Son seans özeti (Commit 9)
   const [lastSession, setLastSession] = useState<LastSession | null>(null);
 
-  // --------------------
-  //     APPSTATE
-  // --------------------
+  // ----------------------------
+  // APPSTATE → dikkat dağınıklığı
+  // ----------------------------
   useEffect(() => {
     const subscription = AppState.addEventListener("change", (nextState) => {
       if (nextState !== "active") {
@@ -39,6 +45,23 @@ export default function FocusTimerScreen() {
 
     return () => subscription.remove();
   }, [isRunning]);
+
+  // ----------------------------
+  // SEANSI KAYDETME FONKSİYONU
+  // ----------------------------
+  const saveSession = async (session: FocusSession) => {
+    try {
+      const json = await AsyncStorage.getItem(STORAGE_KEY);
+      let sessions: FocusSession[] = json ? JSON.parse(json) : [];
+
+      sessions.push(session);
+
+      await AsyncStorage.setItem(STORAGE_KEY, JSON.stringify(sessions));
+      console.log("Seans kaydedildi:", session);
+    } catch (error) {
+      console.log("Seans kaydedilirken hata:", error);
+    }
+  };
 
   const formatTime = (totalSeconds: number) => {
     const m = Math.floor(totalSeconds / 60);
@@ -63,7 +86,7 @@ export default function FocusTimerScreen() {
 
     setTimeLeft(total);
     setIsRunning(true);
-    setLastSession(null); // önceki özet gizlensin
+    setLastSession(null); 
 
     intervalRef.current = setInterval(() => {
       setTimeLeft(prev => {
@@ -71,13 +94,22 @@ export default function FocusTimerScreen() {
           clearInterval(intervalRef.current!);
           setIsRunning(false);
 
-          // ------ SEANS ÖZETİNİ OLUŞTUR ------
-          setLastSession({
+          // ----------------------------
+          // SEANS OLUŞTURMA
+          // ----------------------------
+          const session: FocusSession = {
+            id: Date.now().toString(),
             category: category!,
             duration: total,
             distractions: distractionCount,
             finishedAt: new Date().toISOString(),
-          });
+          };
+
+          // Commit 9: Özet gösterme
+          setLastSession(session);
+
+          // Commit 10: KAYDETME
+          saveSession(session);
 
           alert("Süre bitti!");
           return 0;
@@ -162,16 +194,18 @@ export default function FocusTimerScreen() {
         </TouchableOpacity>
       </View>
 
-      {/* ------------------- */}
-      {/*   SEANS ÖZETİ UI    */}
-      {/* ------------------- */}
+      {/* ----------- SEANS ÖZETİ ------------- */}
       {lastSession && (
         <View style={styles.summaryBox}>
           <Text style={styles.summaryTitle}>Son Seans Özeti</Text>
 
           <Text style={styles.summaryText}>Kategori: {lastSession.category}</Text>
-          <Text style={styles.summaryText}>Süre: {Math.floor(lastSession.duration / 60)} dk</Text>
-          <Text style={styles.summaryText}>Dikkat Dağınıklığı: {lastSession.distractions}</Text>
+          <Text style={styles.summaryText}>
+            Süre: {Math.floor(lastSession.duration / 60)} dk
+          </Text>
+          <Text style={styles.summaryText}>
+            Dikkat Dağınıklığı: {lastSession.distractions}
+          </Text>
           <Text style={styles.summaryText}>
             Bitiş Saati: {new Date(lastSession.finishedAt).toLocaleString()}
           </Text>
