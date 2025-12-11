@@ -1,314 +1,480 @@
-import React, { useState, useRef, useEffect } from 'react';
-import { View, Text, TextInput, TouchableOpacity, StyleSheet, AppState } from 'react-native';
-import RNPickerSelect from 'react-native-picker-select';
 import AsyncStorage from '@react-native-async-storage/async-storage';
+import { useEffect, useRef, useState } from 'react';
+import {
+  AppState,
+  AppStateStatus,
+  StyleSheet,
+  Text,
+  TextInput,
+  TouchableOpacity,
+  View,
+} from 'react-native';
+import RNPickerSelect from 'react-native-picker-select';
+
+const SESSIONS_KEY = 'FOCUS_SESSIONS';
+
+const CATEGORY_OPTIONS = [
+  { label: 'Ders Çalışma', value: 'ders' },
+  { label: 'Kodlama', value: 'kodlama' },
+  { label: 'Proje', value: 'proje' },
+  { label: 'Kitap Okuma', value: 'kitap' },
+];
 
 type FocusSession = {
   id: string;
   category: string;
-  duration: number;
-  distractions: number;
-  finishedAt: string;
+  durationSeconds: number;
+  distractionCount: number;
+  finishedAt: string; // ISO tarih
 };
 
-type LastSession = FocusSession;
+export default function TimerScreen() {
+  // Kullanıcının girdiği süre
+  const [inputMinutes, setInputMinutes] = useState<string>('25');
+  const [inputSeconds, setInputSeconds] = useState<string>('0');
 
-const STORAGE_KEY = "FOCUS_SESSIONS";
-
-export default function FocusTimerScreen() {
-  const [minutesInput, setMinutesInput] = useState('');
-  const [secondsInput, setSecondsInput] = useState('');
-  const [category, setCategory] = useState<string | null>(null);
-
-  const [timeLeft, setTimeLeft] = useState(0);
-  const intervalRef = useRef<NodeJS.Timeout | null>(null);
+  // Sayaç (saniye)
+  const [secondsLeft, setSecondsLeft] = useState<number>(25 * 60);
   const [isRunning, setIsRunning] = useState(false);
+  const [hasSessionStarted, setHasSessionStarted] = useState(false);
 
+  // Kategori
+  const [selectedCategory, setSelectedCategory] = useState<string | null>(null);
+  const [errorMessage, setErrorMessage] = useState<string | null>(null);
+
+  // Dikkat dağınıklığı
   const [distractionCount, setDistractionCount] = useState(0);
+  const [infoMessage, setInfoMessage] = useState<string | null>(null);
 
-  // Son seans özeti (Commit 9)
-  const [lastSession, setLastSession] = useState<LastSession | null>(null);
+  // Son seans özeti
+  const [lastSession, setLastSession] = useState<FocusSession | null>(null);
 
-  // ----------------------------
-  // APPSTATE → dikkat dağınıklığı
-  // ----------------------------
+  const intervalRef = useRef<ReturnType<typeof setInterval> | null>(null);
+  const appState = useRef<AppStateStatus>(AppState.currentState);
+
+  // Bu seansın toplam süresi (saniye) – kayıt için
+  const initialSecondsRef = useRef<number>(25 * 60);
+
+  // Kullanıcının girdiği dakikayı/saniyeyi sayıya çevir
+  const getTotalSeconds = (): number => {
+    const m = parseInt(inputMinutes || '0', 10);
+    const s = parseInt(inputSeconds || '0', 10);
+
+    const safeM = isNaN(m) ? 0 : m;
+    const safeS = isNaN(s) ? 0 : s;
+
+    // saniye 0–59 arası olsun
+    const clampedS = Math.max(0, Math.min(59, safeS));
+
+    return safeM * 60 + clampedS;
+  };
+
+  // Süre alanları değiştiğinde, eğer seans başlamamışsa sayacı güncelle
   useEffect(() => {
-    const subscription = AppState.addEventListener("change", (nextState) => {
-      if (nextState !== "active") {
-        if (isRunning) {
-          stopTimer();
-          setDistractionCount(prev => prev + 1);
-          alert("Dikkat dağıldı! Sayaç durduruldu.");
-        }
+    if (!hasSessionStarted && !isRunning) {
+      const total = getTotalSeconds();
+      setSecondsLeft(total);
+      initialSecondsRef.current = total;
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [inputMinutes, inputSeconds, hasSessionStarted, isRunning]);
+
+  // AsyncStorage'a seans kaydet
+  const saveSession = async (session: FocusSession) => {
+    try {
+      const existing = await AsyncStorage.getItem(SESSIONS_KEY);
+      const parsed: FocusSession[] = existing ? JSON.parse(existing) : [];
+      parsed.push(session);
+      await AsyncStorage.setItem(SESSIONS_KEY, JSON.stringify(parsed));
+    } catch (err) {
+      console.error('Seans kaydedilirken hata:', err);
+    }
+  };
+
+  const handleSessionFinished = () => {
+    const categoryLabel =
+      CATEGORY_OPTIONS.find((c) => c.value === selectedCategory)?.label || 'Belirtilmemiş';
+
+    const session: FocusSession = {
+      id: Date.now().toString(),
+      category: categoryLabel,
+      durationSeconds: initialSecondsRef.current,
+      distractionCount,
+      finishedAt: new Date().toISOString(),
+    };
+
+    saveSession(session);
+    setLastSession(session);
+    setInfoMessage('Seans tamamlandı ve kaydedildi.');
+    setHasSessionStarted(false);
+  };
+
+  // Sayaç çalışırken her 1 saniyede bir azalt
+  useEffect(() => {
+    if (isRunning) {
+      intervalRef.current = setInterval(() => {
+        setSecondsLeft((prev) => {
+          if (prev <= 1) {
+            if (intervalRef.current) {
+              clearInterval(intervalRef.current);
+              intervalRef.current = null;
+            }
+            setIsRunning(false);
+            handleSessionFinished();
+            return 0;
+          }
+          return prev - 1;
+        });
+      }, 1000);
+    }
+
+    return () => {
+      if (intervalRef.current) {
+        clearInterval(intervalRef.current);
+        intervalRef.current = null;
+      }
+    };
+  }, [isRunning]);
+
+  // AppState ile dikkat dağınıklığı takibi
+  useEffect(() => {
+    const subscription = AppState.addEventListener('change', (nextState) => {
+      const prevState = appState.current;
+      appState.current = nextState;
+
+      if (
+        prevState === 'active' &&
+        (nextState === 'background' || nextState === 'inactive') &&
+        isRunning
+      ) {
+        setIsRunning(false);
+        setDistractionCount((prev) => prev + 1);
+        setInfoMessage('Uygulamadan çıktığın için sayaç duraklatıldı.');
       }
     });
 
-    return () => subscription.remove();
+    return () => {
+      subscription.remove();
+    };
   }, [isRunning]);
 
-  // ----------------------------
-  // SEANSI KAYDETME FONKSİYONU
-  // ----------------------------
-  const saveSession = async (session: FocusSession) => {
-    try {
-      const json = await AsyncStorage.getItem(STORAGE_KEY);
-      let sessions: FocusSession[] = json ? JSON.parse(json) : [];
+  const minutes = Math.floor(secondsLeft / 60)
+    .toString()
+    .padStart(2, '0');
+  const seconds = (secondsLeft % 60).toString().padStart(2, '0');
 
-      sessions.push(session);
+  const handleStartPause = () => {
+    const total = getTotalSeconds();
 
-      await AsyncStorage.setItem(STORAGE_KEY, JSON.stringify(sessions));
-      console.log("Seans kaydedildi:", session);
-    } catch (error) {
-      console.log("Seans kaydedilirken hata:", error);
+    // İlk kez başlatılıyorsa kategori ve süre zorunlu
+    if (!isRunning && !hasSessionStarted) {
+      if (total <= 0) {
+        setErrorMessage('Lütfen 0\'dan büyük bir süre girin.');
+        return;
+      }
+      if (!selectedCategory) {
+        setErrorMessage('Lütfen seans için bir kategori seçin.');
+        return;
+      }
+      // İlk kez başlatılıyorsa başlangıç süresini kilitle
+      initialSecondsRef.current = total;
+      setSecondsLeft(total);
     }
+
+    // Süre 0 ise yeni seans için resetle
+    if (secondsLeft === 0 && total > 0) {
+      initialSecondsRef.current = total;
+      setSecondsLeft(total);
+      setDistractionCount(0);
+      setLastSession(null);
+    }
+
+    setErrorMessage(null);
+    setInfoMessage(null);
+    setHasSessionStarted(true);
+    setIsRunning((prev) => !prev);
   };
 
-  const formatTime = (totalSeconds: number) => {
+  const handleReset = () => {
+    setIsRunning(false);
+    const total = getTotalSeconds();
+    initialSecondsRef.current = total;
+    setSecondsLeft(total);
+    setDistractionCount(0);
+    setInfoMessage(null);
+    setHasSessionStarted(false);
+  };
+
+  const formatDuration = (totalSeconds: number) => {
     const m = Math.floor(totalSeconds / 60);
     const s = totalSeconds % 60;
-    return `${String(m).padStart(2, '0')}:${String(s).padStart(2, '0')}`;
+    return `${m} dk ${s} sn`;
   };
 
-  const startTimer = () => {
-    if (!category) {
-      alert("Lütfen kategori seçiniz.");
-      return;
-    }
-
-    const minutes = parseInt(minutesInput) || 0;
-    const seconds = parseInt(secondsInput) || 0;
-    const total = minutes * 60 + seconds;
-
-    if (total <= 0) {
-      alert("Lütfen süreyi doğru giriniz.");
-      return;
-    }
-
-    setTimeLeft(total);
-    setIsRunning(true);
-    setLastSession(null); 
-
-    intervalRef.current = setInterval(() => {
-      setTimeLeft(prev => {
-        if (prev <= 1) {
-          clearInterval(intervalRef.current!);
-          setIsRunning(false);
-
-          // ----------------------------
-          // SEANS OLUŞTURMA
-          // ----------------------------
-          const session: FocusSession = {
-            id: Date.now().toString(),
-            category: category!,
-            duration: total,
-            distractions: distractionCount,
-            finishedAt: new Date().toISOString(),
-          };
-
-          // Commit 9: Özet gösterme
-          setLastSession(session);
-
-          // Commit 10: KAYDETME
-          saveSession(session);
-
-          alert("Süre bitti!");
-          return 0;
-        }
-        return prev - 1;
-      });
-    }, 1000);
+  const formatDate = (iso: string) => {
+    const d = new Date(iso);
+    return d.toLocaleString();
   };
 
-  const stopTimer = () => {
-    setIsRunning(false);
-    if (intervalRef.current) clearInterval(intervalRef.current);
-  };
-
-  const resetTimer = () => {
-    stopTimer();
-    setTimeLeft(0);
-    setDistractionCount(0);
-    setLastSession(null);
-  };
+  const inputsDisabled = hasSessionStarted || isRunning;
 
   return (
     <View style={styles.container}>
       <Text style={styles.title}>Odaklanma Zamanlayıcı</Text>
 
-      {/* --- Kategori Seçimi --- */}
-      <View style={styles.dropdownContainer}>
-        <Text style={styles.label}>Kategori Seç:</Text>
-        <RNPickerSelect
-          onValueChange={(value) => setCategory(value)}
-          placeholder={{ label: "Kategori seçiniz...", value: null }}
-          items={[
-            { label: "Ders Çalışma", value: "ders" },
-            { label: "Kodlama", value: "kodlama" },
-            { label: "Proje", value: "proje" },
-            { label: "Kitap Okuma", value: "kitap" },
-          ]}
-          style={pickerSelectStyles}
-          disabled={isRunning}
-        />
+      {/* Süre girişi */}
+      <View style={styles.durationContainer}>
+        <Text style={styles.durationLabel}>Süre (dakika:saniye):</Text>
+        <View style={styles.durationInputsRow}>
+          <TextInput
+            style={[styles.durationInput, inputsDisabled && styles.inputDisabled]}
+            keyboardType="numeric"
+            value={inputMinutes}
+            editable={!inputsDisabled}
+            onChangeText={(text) => setInputMinutes(text.replace(/[^0-9]/g, ''))}
+            placeholder="Dakika"
+            placeholderTextColor="#6b7280"
+          />
+          <Text style={styles.colon}>:</Text>
+          <TextInput
+            style={[styles.durationInput, inputsDisabled && styles.inputDisabled]}
+            keyboardType="numeric"
+            value={inputSeconds}
+            editable={!inputsDisabled}
+            onChangeText={(text) => setInputSeconds(text.replace(/[^0-9]/g, ''))}
+            placeholder="Saniye"
+            placeholderTextColor="#6b7280"
+          />
+        </View>
+        <Text style={styles.durationHint}>
+          Süreyi sadece seans başlamadan önce değiştirebilirsin.
+        </Text>
       </View>
 
-      {/* Süre giriş alanları */}
-      <View style={styles.row}>
-        <TextInput
-          style={styles.input}
-          keyboardType="numeric"
-          placeholder="Dakika"
-          value={minutesInput}
-          onChangeText={setMinutesInput}
-          editable={!isRunning}
-        />
-        <TextInput
-          style={styles.input}
-          keyboardType="numeric"
-          placeholder="Saniye"
-          value={secondsInput}
-          onChangeText={setSecondsInput}
-          editable={!isRunning}
-        />
+      {/* Kategori seçimi */}
+      <View style={styles.categoryContainer}>
+        <Text style={styles.categoryLabel}>Kategori Seç:</Text>
+        <View style={styles.pickerWrapper}>
+          <RNPickerSelect
+            onValueChange={(value) => {
+              setSelectedCategory(value);
+              setErrorMessage(null);
+            }}
+            items={CATEGORY_OPTIONS}
+            placeholder={{ label: 'Kategori seçiniz...', value: null }}
+            value={selectedCategory}
+            style={{
+              inputIOS: styles.pickerInput,
+              inputAndroid: styles.pickerInput,
+              placeholder: { color: '#9ca3af' },
+            }}
+            useNativeAndroidPickerStyle={false}
+          />
+        </View>
+        {selectedCategory && (
+          <Text style={styles.selectedCategoryText}>
+            Seçilen kategori:{' '}
+            <Text style={{ fontWeight: '600' }}>
+              {CATEGORY_OPTIONS.find((c) => c.value === selectedCategory)?.label}
+            </Text>
+          </Text>
+        )}
+        {errorMessage && <Text style={styles.errorText}>{errorMessage}</Text>}
       </View>
 
-      {/* Geri sayım */}
-      <Text style={styles.timer}>{formatTime(timeLeft)}</Text>
-
-      <Text style={styles.distraction}>
-        Dikkat Dağınıklığı: {distractionCount}
+      {/* Sayaç */}
+      <Text style={styles.timerText}>
+        {minutes}:{seconds}
       </Text>
 
+      {/* Dikkat dağınıklığı bilgisi */}
+      <Text style={styles.distractionText}>
+        Toplam dikkat dağınıklığı: <Text style={{ fontWeight: '600' }}>{distractionCount}</Text>
+      </Text>
+      {infoMessage && <Text style={styles.infoText}>{infoMessage}</Text>}
+
       {/* Butonlar */}
-      <View style={styles.row}>
-        <TouchableOpacity style={[styles.button, styles.start]} onPress={startTimer} disabled={isRunning}>
-          <Text style={styles.buttonText}>Başlat</Text>
+      <View style={styles.buttonsRow}>
+        <TouchableOpacity onPress={handleStartPause} style={styles.buttonPrimary}>
+          <Text style={styles.buttonText}>{isRunning ? 'Duraklat' : 'Başlat'}</Text>
         </TouchableOpacity>
 
-        <TouchableOpacity style={[styles.button, styles.stop]} onPress={stopTimer}>
-          <Text style={styles.buttonText}>Duraklat</Text>
-        </TouchableOpacity>
-
-        <TouchableOpacity style={[styles.button, styles.reset]} onPress={resetTimer}>
+        <TouchableOpacity onPress={handleReset} style={styles.buttonSecondary}>
           <Text style={styles.buttonText}>Sıfırla</Text>
         </TouchableOpacity>
       </View>
 
-      {/* ----------- SEANS ÖZETİ ------------- */}
+      {/* Son seans özeti */}
       {lastSession && (
-        <View style={styles.summaryBox}>
+        <View style={styles.summaryCard}>
           <Text style={styles.summaryTitle}>Son Seans Özeti</Text>
-
           <Text style={styles.summaryText}>Kategori: {lastSession.category}</Text>
           <Text style={styles.summaryText}>
-            Süre: {Math.floor(lastSession.duration / 60)} dk
+            Süre: {formatDuration(lastSession.durationSeconds)}
           </Text>
           <Text style={styles.summaryText}>
-            Dikkat Dağınıklığı: {lastSession.distractions}
+            Dikkat dağınıklığı: {lastSession.distractionCount}
           </Text>
-          <Text style={styles.summaryText}>
-            Bitiş Saati: {new Date(lastSession.finishedAt).toLocaleString()}
-          </Text>
+          <Text style={styles.summaryText}>Bitiş: {formatDate(lastSession.finishedAt)}</Text>
         </View>
       )}
+
+      <Text style={styles.hint}>
+        Seans bittiğinde otomatik kaydedilir. Raporlar sekmesinden tüm geçmiş seansları ve
+        istatistikleri görebilirsin.
+      </Text>
     </View>
   );
 }
 
-const pickerSelectStyles = {
-  inputAndroid: {
-    color: 'white',
-    backgroundColor: '#1b2033',
-    padding: 12,
-    borderRadius: 8,
-    marginTop: 5,
-  },
-  inputIOS: {
-    color: 'white',
-    backgroundColor: '#1b2033',
-    padding: 12,
-    borderRadius: 8,
-    marginTop: 5,
-  },
-};
-
 const styles = StyleSheet.create({
   container: {
     flex: 1,
-    backgroundColor: '#0d0f1a',
-    alignItems: 'center',
-    justifyContent: 'center',
-    padding: 20,
+    paddingHorizontal: 24,
+    paddingTop: 60,
+    backgroundColor: '#020617',
   },
   title: {
-    fontSize: 22,
+    fontSize: 24,
+    fontWeight: '600',
+    textAlign: 'center',
+    marginBottom: 16,
     color: 'white',
-    marginBottom: 20,
   },
-  dropdownContainer: {
-    width: '80%',
-    marginBottom: 20,
+  durationContainer: {
+    marginBottom: 16,
   },
-  label: {
-    color: 'white',
-    marginBottom: 5,
+  durationLabel: {
+    color: '#e5e7eb',
+    marginBottom: 8,
+    fontSize: 14,
   },
-  row: {
+  durationInputsRow: {
     flexDirection: 'row',
-    gap: 10,
-    marginBottom: 20,
+    alignItems: 'center',
+    gap: 8,
   },
-  input: {
-    width: 100,
-    height: 45,
-    backgroundColor: '#1b2033',
+  durationInput: {
+    flex: 1,
+    borderRadius: 999,
+    borderWidth: 1,
+    borderColor: '#4b5563',
+    backgroundColor: '#020617',
     color: 'white',
-    borderRadius: 8,
     paddingHorizontal: 12,
+    paddingVertical: 6,
+    fontSize: 14,
+    textAlign: 'center',
   },
-  timer: {
-    fontSize: 50,
+  inputDisabled: {
+    opacity: 0.6,
+  },
+  colon: {
+    color: '#e5e7eb',
+    fontSize: 20,
+    fontWeight: '600',
+  },
+  durationHint: {
+    marginTop: 4,
+    color: '#9ca3af',
+    fontSize: 11,
+  },
+  categoryContainer: {
+    marginBottom: 16,
+  },
+  categoryLabel: {
+    color: '#e5e7eb',
+    marginBottom: 8,
+    fontSize: 14,
+  },
+  pickerWrapper: {
+    borderRadius: 999,
+    borderWidth: 1,
+    borderColor: '#4b5563',
+    backgroundColor: '#020617',
+    paddingHorizontal: 16,
+    paddingVertical: 2,
+  },
+  pickerInput: {
     color: 'white',
-    marginVertical: 20,
+    paddingVertical: 8,
+    fontSize: 14,
   },
-  distraction: {
+  selectedCategoryText: {
+    marginTop: 8,
+    color: '#9ca3af',
+    fontSize: 12,
+  },
+  errorText: {
+    marginTop: 6,
+    color: '#f97373',
+    fontSize: 12,
+  },
+  timerText: {
+    fontSize: 64,
+    fontWeight: 'bold',
+    textAlign: 'center',
     color: 'white',
-    marginBottom: 10,
-    fontSize: 16,
+    letterSpacing: 4,
   },
-  button: {
-    paddingVertical: 10,
-    paddingHorizontal: 15,
-    borderRadius: 8,
+  distractionText: {
+    marginTop: 12,
+    textAlign: 'center',
+    color: '#e5e7eb',
+    fontSize: 14,
   },
-  start: {
-    backgroundColor: '#3cb371',
+  infoText: {
+    marginTop: 4,
+    textAlign: 'center',
+    color: '#facc15',
+    fontSize: 12,
   },
-  stop: {
-    backgroundColor: '#d4a017',
+  buttonsRow: {
+    flexDirection: 'row',
+    justifyContent: 'center',
+    gap: 16,
+    marginTop: 16,
   },
-  reset: {
-    backgroundColor: '#5563c1',
+  buttonPrimary: {
+    backgroundColor: '#16a34a',
+    paddingHorizontal: 24,
+    paddingVertical: 12,
+    borderRadius: 999,
+  },
+  buttonSecondary: {
+    backgroundColor: '#334155',
+    paddingHorizontal: 24,
+    paddingVertical: 12,
+    borderRadius: 999,
   },
   buttonText: {
     color: 'white',
-    fontWeight: 'bold',
+    fontSize: 16,
+    fontWeight: '600',
   },
-
-  summaryBox: {
-    marginTop: 25,
-    backgroundColor: '#1b2033',
-    padding: 15,
-    borderRadius: 10,
-    width: '90%',
+  summaryCard: {
+    marginTop: 20,
+    padding: 16,
+    borderRadius: 16,
+    backgroundColor: '#020617',
+    borderWidth: 1,
+    borderColor: '#1f2937',
   },
   summaryTitle: {
     color: 'white',
-    fontSize: 18,
-    marginBottom: 10,
+    fontSize: 16,
+    fontWeight: '600',
+    marginBottom: 8,
   },
   summaryText: {
-    color: 'white',
-    fontSize: 15,
+    color: '#e5e7eb',
+    fontSize: 13,
+    marginBottom: 2,
+  },
+  hint: {
+    marginTop: 12,
+    textAlign: 'center',
+    color: '#9ca3af',
+    fontSize: 12,
   },
 });
