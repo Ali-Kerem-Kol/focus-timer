@@ -1,16 +1,26 @@
 import React, { useCallback, useState } from 'react';
-import { View, Text, FlatList, StyleSheet } from 'react-native';
+import { View, Text, FlatList, StyleSheet, Dimensions, ScrollView } from 'react-native';
 import AsyncStorage from '@react-native-async-storage/async-storage';
-import { FocusSession } from './types';
 import { useFocusEffect } from '@react-navigation/native';
+import { BarChart } from 'react-native-chart-kit';
 
 const STORAGE_KEY = "FOCUS_SESSIONS";
+const screenWidth = Dimensions.get("window").width;
+
+export type FocusSession = {
+  id: string;
+  category: string;
+  duration: number;
+  distractions: number;
+  finishedAt: string;
+};
 
 export default function ReportsScreen() {
   const [sessions, setSessions] = useState<FocusSession[]>([]);
   const [totalTime, setTotalTime] = useState(0);
   const [todayTime, setTodayTime] = useState(0);
   const [totalDistractions, setTotalDistractions] = useState(0);
+  const [weeklyData, setWeeklyData] = useState<number[]>([]);
 
   const loadSessions = async () => {
     try {
@@ -20,26 +30,44 @@ export default function ReportsScreen() {
       setSessions(data);
 
       // ---------- TOPLAM SÜRE ----------
-      const total = data.reduce((sum, s) => sum + s.duration, 0);
-      setTotalTime(total);
+      setTotalTime(data.reduce((sum, s) => sum + s.duration, 0));
 
       // ---------- BUGÜNKÜ SÜRE ----------
       const today = new Date().toDateString();
-      const todayTotal = data
-        .filter(s => new Date(s.finishedAt).toDateString() === today)
-        .reduce((sum, s) => sum + s.duration, 0);
-      setTodayTime(todayTotal);
+      setTodayTime(
+        data
+          .filter(s => new Date(s.finishedAt).toDateString() === today)
+          .reduce((sum, s) => sum + s.duration, 0)
+      );
 
       // ---------- TOPLAM DİKKAT DAĞ. ----------
-      const dist = data.reduce((sum, s) => sum + s.distractions, 0);
-      setTotalDistractions(dist);
+      setTotalDistractions(
+        data.reduce((sum, s) => sum + s.distractions, 0)
+      );
+
+      // ---------- 7 GÜNLÜK BAR CHART VERİSİ ----------
+      const last7days: number[] = [];
+      for (let i = 6; i >= 0; i--) {
+        const day = new Date();
+        day.setDate(day.getDate() - i);
+
+        const dayString = day.toDateString();
+        const totalDayMinutes =
+          data
+            .filter(s => new Date(s.finishedAt).toDateString() === dayString)
+            .reduce((sum, s) => sum + s.duration / 60, 0); // dakika cinsinden
+
+        last7days.push(Math.round(totalDayMinutes));
+      }
+
+      setWeeklyData(last7days);
 
     } catch (err) {
       console.log("Raporlar yüklenirken hata:", err);
     }
   };
 
-  // Ekrana her dönüldüğünde çalışır
+  // Ekrana her dönüldüğünde veri yenilenir
   useFocusEffect(
     useCallback(() => {
       loadSessions();
@@ -56,9 +84,35 @@ export default function ReportsScreen() {
   );
 
   return (
-    <View style={styles.container}>
+    <ScrollView style={styles.container}>
       <Text style={styles.title}>📊 Raporlar</Text>
 
+      {/* ------------------- */}
+      {/*   7 GÜNLÜK BAR CHART */}
+      {/* ------------------- */}
+      <Text style={styles.subtitle}>Son 7 Gün</Text>
+
+      <BarChart
+        data={{
+          labels: ["-6", "-5", "-4", "-3", "-2", "-1", "Bugün"],
+          datasets: [{ data: weeklyData }],
+        }}
+        width={screenWidth - 30}
+        height={220}
+        chartConfig={{
+          backgroundColor: "#1b2033",
+          backgroundGradientFrom: "#1b2033",
+          backgroundGradientTo: "#1b2033",
+          decimalPlaces: 0,
+          color: () => `rgba(255, 255, 255, 0.9)`,
+          labelColor: () => `rgba(255, 255, 255, 0.7)`,
+        }}
+        style={{ marginVertical: 10, borderRadius: 12, alignSelf: "center" }}
+      />
+
+      {/* ------------------- */}
+      {/*   İSTATİSTİKLER     */}
+      {/* ------------------- */}
       <View style={styles.statBox}>
         <Text style={styles.statText}>Bugünkü Süre: {Math.floor(todayTime / 60)} dk</Text>
         <Text style={styles.statText}>Toplam Süre: {Math.floor(totalTime / 60)} dk</Text>
@@ -70,34 +124,32 @@ export default function ReportsScreen() {
         data={sessions}
         keyExtractor={(item) => item.id}
         renderItem={renderItem}
-        contentContainerStyle={{ paddingBottom: 50 }}
+        scrollEnabled={false}
       />
-    </View>
+    </ScrollView>
   );
 }
 
 // --------------------
-//   TİPLER
+//   STYLES
 // --------------------
-export type FocusSession = {
-  id: string;
-  category: string;
-  duration: number;
-  distractions: number;
-  finishedAt: string;
-};
-
 const styles = StyleSheet.create({
   container: {
     flex: 1,
     backgroundColor: '#0d0f1a',
-    padding: 20,
+    padding: 15,
   },
   title: {
     fontSize: 24,
     color: 'white',
     marginBottom: 15,
     textAlign: 'center',
+  },
+  subtitle: {
+    color: 'white',
+    fontSize: 18,
+    marginTop: 15,
+    marginBottom: 8,
   },
   statBox: {
     backgroundColor: '#1b2033',
@@ -109,11 +161,6 @@ const styles = StyleSheet.create({
     color: 'white',
     fontSize: 16,
     marginBottom: 5,
-  },
-  subtitle: {
-    color: 'white',
-    fontSize: 18,
-    marginBottom: 10,
   },
   sessionBox: {
     backgroundColor: '#1b2033',
