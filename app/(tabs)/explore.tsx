@@ -2,7 +2,7 @@ import React, { useCallback, useState } from 'react';
 import { View, Text, FlatList, StyleSheet, Dimensions, ScrollView } from 'react-native';
 import AsyncStorage from '@react-native-async-storage/async-storage';
 import { useFocusEffect } from '@react-navigation/native';
-import { BarChart } from 'react-native-chart-kit';
+import { BarChart, PieChart } from 'react-native-chart-kit';
 
 const STORAGE_KEY = "FOCUS_SESSIONS";
 const screenWidth = Dimensions.get("window").width;
@@ -10,7 +10,7 @@ const screenWidth = Dimensions.get("window").width;
 export type FocusSession = {
   id: string;
   category: string;
-  duration: number;
+  duration: number; // seconds
   distractions: number;
   finishedAt: string;
 };
@@ -20,13 +20,14 @@ export default function ReportsScreen() {
   const [totalTime, setTotalTime] = useState(0);
   const [todayTime, setTodayTime] = useState(0);
   const [totalDistractions, setTotalDistractions] = useState(0);
+
   const [weeklyData, setWeeklyData] = useState<number[]>([]);
+  const [pieData, setPieData] = useState<any[]>([]);
 
   const loadSessions = async () => {
     try {
       const json = await AsyncStorage.getItem(STORAGE_KEY);
       const data: FocusSession[] = json ? JSON.parse(json) : [];
-
       setSessions(data);
 
       // ---------- TOPLAM SÜRE ----------
@@ -40,12 +41,12 @@ export default function ReportsScreen() {
           .reduce((sum, s) => sum + s.duration, 0)
       );
 
-      // ---------- TOPLAM DİKKAT DAĞ. ----------
+      // ---------- TOPLAM DİKKAT ----------
       setTotalDistractions(
         data.reduce((sum, s) => sum + s.distractions, 0)
       );
 
-      // ---------- 7 GÜNLÜK BAR CHART VERİSİ ----------
+      // ---------- 7 GÜNLÜK BAR CHART ----------
       const last7days: number[] = [];
       for (let i = 6; i >= 0; i--) {
         const day = new Date();
@@ -55,19 +56,37 @@ export default function ReportsScreen() {
         const totalDayMinutes =
           data
             .filter(s => new Date(s.finishedAt).toDateString() === dayString)
-            .reduce((sum, s) => sum + s.duration / 60, 0); // dakika cinsinden
+            .reduce((sum, s) => sum + s.duration / 60, 0);
 
         last7days.push(Math.round(totalDayMinutes));
       }
-
       setWeeklyData(last7days);
+
+      // ---------- KATEGORİ DAĞILIMI (Pie Chart) ----------
+      const categoryTotals: Record<string, number> = {};
+
+      data.forEach((s) => {
+        if (!categoryTotals[s.category]) {
+          categoryTotals[s.category] = 0;
+        }
+        categoryTotals[s.category] += Math.round(s.duration / 60); // dakika
+      });
+
+      const pieArray = Object.keys(categoryTotals).map((cat, i) => ({
+        name: cat,
+        population: categoryTotals[cat],
+        color: ['#ff6b81', '#1e90ff', '#6a5acd', '#3cb371'][i % 4],
+        legendFontColor: "#ffffff",
+        legendFontSize: 14,
+      }));
+
+      setPieData(pieArray);
 
     } catch (err) {
       console.log("Raporlar yüklenirken hata:", err);
     }
   };
 
-  // Ekrana her dönüldüğünde veri yenilenir
   useFocusEffect(
     useCallback(() => {
       loadSessions();
@@ -79,7 +98,9 @@ export default function ReportsScreen() {
       <Text style={styles.sessionText}>Kategori: {item.category}</Text>
       <Text style={styles.sessionText}>Süre: {Math.floor(item.duration / 60)} dk</Text>
       <Text style={styles.sessionText}>Dikkat Dağınıklığı: {item.distractions}</Text>
-      <Text style={styles.sessionText}>Tarih: {new Date(item.finishedAt).toLocaleString()}</Text>
+      <Text style={styles.sessionText}>
+        Tarih: {new Date(item.finishedAt).toLocaleString()}
+      </Text>
     </View>
   );
 
@@ -87,11 +108,8 @@ export default function ReportsScreen() {
     <ScrollView style={styles.container}>
       <Text style={styles.title}>📊 Raporlar</Text>
 
-      {/* ------------------- */}
-      {/*   7 GÜNLÜK BAR CHART */}
-      {/* ------------------- */}
+      {/* ---- Bar Chart ---- */}
       <Text style={styles.subtitle}>Son 7 Gün</Text>
-
       <BarChart
         data={{
           labels: ["-6", "-5", "-4", "-3", "-2", "-1", "Bugün"],
@@ -107,18 +125,30 @@ export default function ReportsScreen() {
           color: () => `rgba(255, 255, 255, 0.9)`,
           labelColor: () => `rgba(255, 255, 255, 0.7)`,
         }}
-        style={{ marginVertical: 10, borderRadius: 12, alignSelf: "center" }}
+        style={{ marginVertical: 15, borderRadius: 12, alignSelf: "center" }}
       />
 
-      {/* ------------------- */}
-      {/*   İSTATİSTİKLER     */}
-      {/* ------------------- */}
+      {/* ---- Pie Chart ---- */}
+      <Text style={styles.subtitle}>Kategori Dağılımı</Text>
+
+      <PieChart
+        data={pieData}
+        width={screenWidth - 20}
+        height={250}
+        accessor={"population"}
+        backgroundColor={"transparent"}
+        paddingLeft={"15"}
+        absolute
+      />
+
+      {/* ---- İstatistikler ---- */}
       <View style={styles.statBox}>
         <Text style={styles.statText}>Bugünkü Süre: {Math.floor(todayTime / 60)} dk</Text>
         <Text style={styles.statText}>Toplam Süre: {Math.floor(totalTime / 60)} dk</Text>
-        <Text style={styles.statText}>Toplam Dikkat Dağınıklığı: {totalDistractions}</Text>
+        <Text style={styles.statText}>Toplam Dikkat Dağ.: {totalDistractions}</Text>
       </View>
 
+      {/* ---- Seans Listesi ---- */}
       <Text style={styles.subtitle}>Geçmiş Seanslar</Text>
       <FlatList
         data={sessions}
