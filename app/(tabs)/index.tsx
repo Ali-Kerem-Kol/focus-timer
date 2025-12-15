@@ -8,8 +8,11 @@ import {
   TextInput,
   TouchableOpacity,
   View,
+  Platform,
 } from 'react-native';
 import RNPickerSelect from 'react-native-picker-select';
+import * as Haptics from 'expo-haptics';
+import * as Notifications from 'expo-notifications';
 
 const SESSIONS_KEY = 'FOCUS_SESSIONS';
 
@@ -91,7 +94,7 @@ export default function TimerScreen() {
     }
   };
 
-  const handleSessionFinished = () => {
+  const handleSessionFinished = async () => {
     const categoryLabel =
       CATEGORY_OPTIONS.find((c) => c.value === selectedCategory)?.label || 'Belirtilmemiş';
 
@@ -107,6 +110,33 @@ export default function TimerScreen() {
     setLastSession(session);
     setInfoMessage('Seans tamamlandı ve kaydedildi.');
     setHasSessionStarted(false);
+
+    // Haptics feedback (ignore failures gracefully)
+    try {
+      await Haptics.notificationAsync(Haptics.NotificationFeedbackType.Success);
+    } catch {}
+
+    // Request permission and schedule a local notification
+    try {
+      if (Platform.OS !== 'web') {
+        let perm = await Notifications.getPermissionsAsync();
+        if (perm.status !== 'granted') {
+          perm = await Notifications.requestPermissionsAsync();
+        }
+        if (perm.status === 'granted') {
+          await Notifications.scheduleNotificationAsync({
+            content: {
+              title: 'Seans tamamlandı!',
+              body: `${categoryLabel} odak seansı bitti.`,
+              sound: true,
+            },
+            trigger: null,
+          });
+        }
+      }
+    } catch (e) {
+      console.warn('Notification error:', e);
+    }
   };
 
   // Sayaç çalışırken her 1 saniyede bir azalt
